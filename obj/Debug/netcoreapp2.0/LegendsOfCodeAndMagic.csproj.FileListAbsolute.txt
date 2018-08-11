@@ -1,0 +1,11 @@
+C:\Users\Conrad\OneDrive\Code\LegendsOfCodeAndMagic\obj\Debug\netcoreapp2.0\LegendsOfCodeAndMagic.csprojResolveAssemblyReference.cache
+C:\Users\Conrad\OneDrive\Code\LegendsOfCodeAndMagic\obj\Debug\netcoreapp2.0\LegendsOfCodeAndMagic.csproj.CoreCompileInputs.cache
+C:\Users\Conrad\OneDrive\Code\LegendsOfCodeAndMagic\obj\Debug\netcoreapp2.0\LegendsOfCodeAndMagic.AssemblyInfoInputs.cache
+C:\Users\Conrad\OneDrive\Code\LegendsOfCodeAndMagic\obj\Debug\netcoreapp2.0\LegendsOfCodeAndMagic.AssemblyInfo.cs
+C:\Users\Conrad\OneDrive\Code\LegendsOfCodeAndMagic\bin\Debug\netcoreapp2.0\LegendsOfCodeAndMagic.deps.json
+C:\Users\Conrad\OneDrive\Code\LegendsOfCodeAndMagic\bin\Debug\netcoreapp2.0\LegendsOfCodeAndMagic.runtimeconfig.json
+C:\Users\Conrad\OneDrive\Code\LegendsOfCodeAndMagic\bin\Debug\netcoreapp2.0\LegendsOfCodeAndMagic.runtimeconfig.dev.json
+C:\Users\Conrad\OneDrive\Code\LegendsOfCodeAndMagic\bin\Debug\netcoreapp2.0\LegendsOfCodeAndMagic.dll
+C:\Users\Conrad\OneDrive\Code\LegendsOfCodeAndMagic\bin\Debug\netcoreapp2.0\LegendsOfCodeAndMagic.pdb
+C:\Users\Conrad\OneDrive\Code\LegendsOfCodeAndMagic\obj\Debug\netcoreapp2.0\LegendsOfCodeAndMagic.dll
+C:\Users\Conrad\OneDrive\Code\LegendsOfCodeAndMagic\obj\Debug\netcoreapp2.0\LegendsOfCodeAndMagic.pdb
