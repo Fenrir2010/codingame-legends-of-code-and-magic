@@ -1,6 +1,7 @@
 ﻿using System;
-using System.Linq;
+using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Collections;
 using System.Collections.Generic;
@@ -47,7 +48,7 @@ class Player
                 int cardType = int.Parse(inputs[3]);
                 int cost = int.Parse(inputs[4]);
                 int attack = int.Parse(inputs[5]);
-                int defense = int.Parse(inputs[6]);
+                int defence = int.Parse(inputs[6]);
                 string abilities = inputs[7];
                 int myHealthChange = int.Parse(inputs[8]);
                 int opponentHealthChange = int.Parse(inputs[9]);
@@ -60,7 +61,7 @@ class Player
                     cardType,
                     cost,
                     attack,
-                    defense,
+                    defence,
                     abilities,
                     myHealthChange,
                     opponentHealthChange,
@@ -76,17 +77,23 @@ class Player
     }
 }
 
-enum GameMode
+public enum GameMode
 {
     Draft,
     Battle
 }
 
-enum CardLocation
+public enum CardAbility
+{
+    Breakthrough = 'B',
+    Charge = 'C',
+    Guard = 'G'
+}
+public enum CardLocation
 {
     PlayerHand = 0,
     PlayerField = 1,
-    OpponentField = 2
+    OpponentField = -1
 }
 
 class State
@@ -109,10 +116,12 @@ class GameFactoryBuilder
     private int _opponentDeck;
     private int _opponentRune;
     private List<GameCard> _gameDeck = new List<GameCard>();
+    private Stopwatch _stopwatch = new Stopwatch();
 
     public GameFactoryBuilder(State state)
     {
         _state = state;
+        _stopwatch.Start();
     }
 
     public void AddDetail(
@@ -144,7 +153,7 @@ class GameFactoryBuilder
         int cardType,
         int cost,
         int attack,
-        int defense,
+        int defence,
         string abilities,
         int myHealthChange,
         int opponentHealthChange,
@@ -157,7 +166,7 @@ class GameFactoryBuilder
             cardType,
             cost,
             attack,
-            defense,
+            defence,
             abilities,
             myHealthChange,
             opponentHealthChange,
@@ -173,12 +182,12 @@ class GameFactoryBuilder
 
         if (_state.GameMode == GameMode.Draft)
         {
-            var draft = new Draft(_gameDeck);
+            var draft = new Draft(_gameDeck, _stopwatch);
             action = draft.Command();
         } 
         else if (_state.GameMode == GameMode.Battle)
         {
-            var battle = new Battle(_playerMana, _gameDeck);
+            var battle = new Battle(_playerMana, _gameDeck, _stopwatch);
             action = battle.Command();
         }
 
@@ -186,19 +195,19 @@ class GameFactoryBuilder
     }
 }
 
-class GameCard
+class GameCard : IEquatable<GameCard>
 {
-    public int CardNumber { get; }
-    public int InstanceId { get; }
-    public CardLocation Location { get; }
-    public int CardType { get; }
-    public int Cost { get; }
-    public int Attack { get; }
-    public int Defense { get; }
-    public string Abilities { get; }
-    public int MyHealthChange { get; }
-    public int OpponentHealthChange { get; }
-    public int CardDraw { get; }
+    public int CardNumber { get; set; }
+    public int InstanceId { get; set; }
+    public CardLocation Location { get; set; }
+    public int CardType { get; set; }
+    public int Cost { get; set; }
+    public int Attack { get; set; }
+    public int Defence { get; set; }
+    public IEnumerable<CardAbility> Abilities { get; set; }
+    public int MyHealthChange { get; set; }
+    public int OpponentHealthChange { get; set; }
+    public int CardDraw { get; set; }
 
     public GameCard(
         int cardNumber,
@@ -207,7 +216,7 @@ class GameCard
         int cardType,
         int cost,
         int attack,
-        int defense,
+        int defence,
         string abilities,
         int myHealthChange,
         int opponentHealthChange,
@@ -219,31 +228,42 @@ class GameCard
         CardType = cardType;
         Cost = cost;
         Attack = attack;
-        Defense = defense;
-        Abilities = abilities;
+        Defence = defence;
+        Abilities = abilities.Replace("-", "").Select(c => (CardAbility) c);
         MyHealthChange = myHealthChange;
         OpponentHealthChange = opponentHealthChange;
         CardDraw = cardDraw;
+    }
+
+    public bool Equals(GameCard other)
+    {
+
+        return (InstanceId == -1)
+            ? CardNumber == other.CardNumber
+            : InstanceId == other.InstanceId;
     }
 }
 
 class Draft
 {
     private List<GameCard> _cards;
+    private Stopwatch _stopwatch;
 
-    public Draft(List<GameCard> cards)
+    public Draft(List<GameCard> cards, Stopwatch stopwatch)
     {
         _cards = cards;
+        _stopwatch = stopwatch;
     }
 
     public int Choice()
     {
+        var cardSelection = _cards
+            .OrderBy(g => g.Cost)
+            .ThenByDescending(g => g.Abilities.Count())
+            .First();
+
         var result = _cards
-            .IndexOf(
-                _cards
-                .OrderBy(g => g.Cost)
-                .First()
-            );
+            .IndexOf(cardSelection);
 
         return result;
     }
@@ -261,11 +281,15 @@ class Battle
 {
     private int _mana;
     private List<GameCard> _gameDeck;
+    private Stopwatch _stopwatch;
+    private IEnumerable<GameCard> _opponentCreatureCards;
 
-    public Battle(int mana, List<GameCard> gameDeck)
+    public Battle(int mana, List<GameCard> gameDeck, Stopwatch stopwatch)
     {
         _mana = mana;
         _gameDeck = gameDeck;
+        _stopwatch = stopwatch;
+        _opponentCreatureCards = OpponentCreatureCards();
     }
 
     private List<GameCard> SummonableCards()
@@ -286,26 +310,42 @@ class Battle
         return result;
     }
 
-    private int? SummonChoice()
-    {   
+    private IEnumerable<GameCard> OpponentCreatureCards()
+    {
+        var result = _gameDeck
+            .Where(c => c.Location == CardLocation.OpponentField);
+
+        return result;
+    }
+
+    private GameCard SummonChoice()
+    {
         var cards = SummonableCards();
 
         // Pick a summonable card (semi-random)
-        var result = cards.Where(c => c.Cost < _mana)
+        var result = cards.Where(c => c.Cost < _mana)        
             .FirstOrDefault();
         // record the spend
         _mana -= result?.Cost ?? 0;
 
-        return result?.InstanceId;
+        return result;
     }
 
     private List<string> Summon()
     {
         var result = new List<string>();
 
-        for (int? id; (id = SummonChoice()) != null; )
+        for (GameCard summonCard; (summonCard = SummonChoice()) != null; )
         {
-            var summonOutput = $"SUMMON {id}";
+            var summonOutput = $"SUMMON {summonCard.InstanceId}";
+
+            if (summonCard.Abilities.Any(a => a == CardAbility.Charge))
+            {
+                // If summon has charge then record it as in the playfield
+                _gameDeck
+                    .Single(c => c.InstanceId == summonCard.InstanceId)
+                    .Location = CardLocation.PlayerField;
+            }
 
             result.Add(summonOutput);
         }
@@ -315,16 +355,43 @@ class Battle
 
     private (int attacker, int target) AttackChoice(GameCard card)
     {
-        var attackDetail = (card.InstanceId, -1);
+        var targetGuard = _opponentCreatureCards
+            .Where(c => c.Abilities.Any(c2 => c2 == CardAbility.Guard)
+                && c.Defence > 0)
+            .FirstOrDefault();
+        var targetId = -1;
+
+        var attackDetail = (card.InstanceId, targetId);
 
         return attackDetail;
+    }
+
+    private List<string> AttackDefenders(
+        List<GameCard> myCreatures, 
+        List<GameCard> targetCreatures
+    ) {
+        var targetGuards = targetCreatures
+            .Where(c => c.Abilities.Any(c2 => c2 == CardAbility.Guard)
+                && c.Defence > 0);
+        
+        foreach(var targetGuard in targetGuards)
+        {
+
+        }
+        throw new NotImplementedException();
     }
 
     private List<string> Attack()
     {
         var result = new List<string>();
 
-        var cards = MyCreatureCards();
+        var cards = MyCreatureCards()
+            .Where(c => c.Attack > 0).ToList();
+        var battleTeams = GetAttackCombos(cards);
+
+        result.AddRange(RemoveDefenders(
+            battleTeams,
+            cards));
 
         foreach(var card in cards)
         {
@@ -332,6 +399,85 @@ class Battle
             var attackOutput = $"ATTACK {detail.attacker} {detail.target}";
 
             result.Add(attackOutput);
+        }
+
+        return result;
+    }
+
+    // This is potentially a very slow routine, but with a 6 card limit I think it is worth a try
+    private Dictionary<int, List<BattleTeam>> GetAttackCombos(List<GameCard> attackCards)
+    {
+        var result = new Dictionary<int, List<BattleTeam>>();
+        var combos = Combinations.GetAllCombos<GameCard>(attackCards);
+        foreach(var combo in combos)
+        {
+            var battleTeam = new BattleTeam(
+                combo,
+                int.Parse(combo.Sum(c => c.Attack).ToString()),
+                int.Parse(combo.Sum(c => c.Defence).ToString())
+            );
+            if (!result.ContainsKey(battleTeam.AttackStrength))
+            {
+                result.Add(battleTeam.AttackStrength, new List<BattleTeam>());
+            }
+            result[battleTeam.AttackStrength].Add(battleTeam);
+        }
+
+        return result;
+    }
+
+    private List<string> RemoveDefenders(
+        Dictionary<int, List<BattleTeam>> battleTeams,
+        List<GameCard> attackers
+    )
+    {
+        var guards = _opponentCreatureCards
+            .Where(c => c.Abilities.Contains(CardAbility.Guard));
+        var unbeatenGuard = false;
+        var result = new List<string>();
+
+        foreach (var guard in guards)
+        {
+            var lowestPowerWin = battleTeams.Keys
+                .Cast<int?>()
+                .Where(k => k >= guard.Defence)
+                .OrderBy(k => k)
+                .FirstOrDefault();
+            if (lowestPowerWin == null)
+            {
+                unbeatenGuard = true;
+                continue;
+            }
+
+            // Just grab the first, don't worry about most appropriate
+            var battleTeam =  battleTeams[(int) lowestPowerWin][0];
+
+            // scrub the team members from combos and attackers
+            foreach (var member in battleTeam.Team)
+            {
+                attackers.RemoveAll(c => c.Equals(member));
+                var emptyKeys = new List<int>();
+                foreach(var checkTeam in battleTeams)
+                {
+                    // 3 deep loop, wtf, needs sorting
+                    checkTeam.Value.RemoveAll(bt => bt.Team.Any(gc => gc.Equals(member)));
+                    if (checkTeam.Value.Count() == 0)
+                    {
+                        emptyKeys.Add(checkTeam.Key);
+                    }
+                }
+                foreach(var btKey in emptyKeys)
+                {
+                    battleTeams.Remove(btKey);
+                }
+                var attackOutput = $"ATTACK {member.InstanceId} {guard.InstanceId}";
+                result.Add(attackOutput);
+            }
+        }
+
+        if (unbeatenGuard)
+        {
+            attackers.Clear();
         }
 
         return result;
@@ -350,4 +496,53 @@ class Battle
 
         return result;
     }
+}
+
+class BattleTeam
+{
+    public IEnumerable<GameCard> Team { get; set; }
+    public int AttackStrength { get; set; }
+    public int DefenceStrength { get; set; }
+
+    public BattleTeam(
+        IEnumerable<GameCard> team,
+        int attackStrength,
+        int defenceStrength
+    ) {
+        Team = team;
+        AttackStrength = attackStrength;
+        DefenceStrength = defenceStrength;
+    }
+}
+
+// All credit to this article:
+// https://www.geeksforgeeks.org/print-all-possible-combinations-of-r-elements-in-a-given-array-of-size-n/
+// Which helped me understand this lifted solution:
+// https://stackoverflow.com/questions/7802822/all-possible-combinations-of-a-list-of-values
+public static class Combinations
+{
+    public static List<List<T>> GetAllCombos<T>(List<T> list)
+    {
+    int comboCount = (int) Math.Pow(2, list.Count) - 1;
+    List<List<T>> result = new List<List<T>>();
+    for (int i = 1; i < comboCount + 1; i++)
+    {
+        // make each combo here
+        result.Add(new List<T>());
+        for (int j = 0; j < list.Count; j++)
+        {
+            if ((i >> j) % 2 != 0)
+                result.Last().Add(list[j]);
+        }
+    }
+    return result;
+    }
+}
+
+public static class Tools
+{
+    public static void Log(string logMessage)
+    {
+        Console.Error.WriteLine(logMessage);
+    }   
 }
