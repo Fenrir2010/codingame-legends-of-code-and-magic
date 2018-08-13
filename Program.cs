@@ -96,6 +96,14 @@ public enum CardLocation
     OpponentField = -1
 }
 
+public enum CardType
+{
+    Creature = 0,
+    GreenItem = 1,  // My Creatures
+    RedItem = 2,    // Opponent Creatures
+    BlueItem = 3    // Targetless (-1)
+}
+
 class State
 {
     public int Turn { get; set; }
@@ -200,7 +208,7 @@ class GameCard : IEquatable<GameCard>
     public int CardNumber { get; set; }
     public int InstanceId { get; set; }
     public CardLocation Location { get; set; }
-    public int CardType { get; set; }
+    public CardType CardType { get; set; }
     public int Cost { get; set; }
     public int Attack { get; set; }
     public int Defence { get; set; }
@@ -225,7 +233,7 @@ class GameCard : IEquatable<GameCard>
         CardNumber = cardNumber;
         InstanceId = instanceId;
         Location = (CardLocation) location;
-        CardType = cardType;
+        CardType = (CardType) cardType;
         Cost = cost;
         Attack = attack;
         Defence = defence;
@@ -279,10 +287,14 @@ class Draft
 
 class Battle
 {
+    private const int SUMMON_LIMIT = 6;
     private int _mana;
     private List<GameCard> _gameDeck;
     private Stopwatch _stopwatch;
-    private IEnumerable<GameCard> _opponentCreatureCards;
+    private List<GameCard> _opponentCreatureCards;
+    private List<GameCard> _summonableCards;
+    private List<GameCard> _myCreatureCards;
+    private int _summonSlots;
 
     public Battle(int mana, List<GameCard> gameDeck, Stopwatch stopwatch)
     {
@@ -290,6 +302,10 @@ class Battle
         _gameDeck = gameDeck;
         _stopwatch = stopwatch;
         _opponentCreatureCards = OpponentCreatureCards();
+        _summonableCards = SummonableCards();
+        _myCreatureCards = MyCreatureCards();
+        _summonableCards = SummonableCards();
+        _summonSlots = SUMMON_LIMIT - _myCreatureCards.Count;
     }
 
     private List<GameCard> SummonableCards()
@@ -310,23 +326,81 @@ class Battle
         return result;
     }
 
-    private IEnumerable<GameCard> OpponentCreatureCards()
+    private List<GameCard> OpponentCreatureCards()
     {
         var result = _gameDeck
-            .Where(c => c.Location == CardLocation.OpponentField);
+            .Where(c => c.Location == CardLocation.OpponentField)
+            .ToList();
 
         return result;
     }
 
-    private GameCard SummonChoice()
+    private GameCard SummonCreatureChoice()
     {
-        var cards = SummonableCards();
-
         // Pick a summonable card (semi-random)
-        var result = cards.Where(c => c.Cost < _mana)        
+        var result = _summonableCards
+            .Where(c => c.Cost < _mana &&
+                c.CardType == CardType.Creature)        
             .FirstOrDefault();
+        _summonableCards.Remove(result);
+        
         // record the spend
         _mana -= result?.Cost ?? 0;
+
+        return result;
+    }
+
+    private (GameCard ItemCard, int Target) SummonItemChoice()
+    {
+        var result = ((GameCard) null, 0);
+        do
+        {
+            // Pick a no creature item card
+            result = (_summonableCards
+                .Where(c => c.Cost < _mana &&
+                    c.CardType == CardType.BlueItem)        
+                .FirstOrDefault(), -1);
+            _summonableCards.Remove(result.Item1);
+            if (result.Item1 != null) break;
+
+            // Target an opponent creature if one exists
+            var opponent = _opponentCreatureCards.FirstOrDefault();
+            if (opponent != null) {
+            result = (_summonableCards
+                .Where(c => c.Cost < _mana &&
+                    c.CardType == CardType.RedItem)        
+                .FirstOrDefault(), opponent.InstanceId);
+                if (result.Item1 != null)
+                {
+                    _summonableCards.Remove(result.Item1);
+                    opponent.Attack += result.Item1.Attack;
+                    opponent.Defence += result.Item1.Defence;
+                    if (opponent.Defence < 1) _opponentCreatureCards.Remove(opponent);
+                    break;
+                }
+            }
+
+            // Target an opponent if one exists
+            // TODO - consider looking at newly summoned creatures
+            var creature = _myCreatureCards.FirstOrDefault();
+            if (creature != null) {
+            result = (_summonableCards
+                .Where(c => c.Cost < _mana &&
+                    c.CardType == CardType.GreenItem)        
+                .FirstOrDefault(), creature.InstanceId);
+                if (result.Item1 != null)
+                {
+                    _summonableCards.Remove(result.Item1);
+                    creature.Attack += result.Item1.Attack;
+                    creature.Defence += result.Item1.Defence;
+                    break;
+                }
+            }
+
+        } while (false);
+
+        // record the spend
+        _mana -= result.Item1?.Cost ?? 0;
 
         return result;
     }
@@ -335,9 +409,10 @@ class Battle
     {
         var result = new List<string>();
 
-        for (GameCard summonCard; (summonCard = SummonChoice()) != null; )
+        for (GameCard summonCard; (summonCard = SummonCreatureChoice()) != null && _summonSlots > 0; )
         {
             var summonOutput = $"SUMMON {summonCard.InstanceId}";
+            _summonSlots--;
 
             if (summonCard.Abilities.Any(a => a == CardAbility.Charge))
             {
@@ -346,6 +421,13 @@ class Battle
                     .Single(c => c.InstanceId == summonCard.InstanceId)
                     .Location = CardLocation.PlayerField;
             }
+
+            result.Add(summonOutput);
+        }
+
+        for ((GameCard ItemCard, int Target) itemDetail; (itemDetail = SummonItemChoice()).ItemCard != null; )
+        {
+            var summonOutput = $"USE {itemDetail.ItemCard.InstanceId} {itemDetail.Target}";
 
             result.Add(summonOutput);
         }
@@ -385,9 +467,9 @@ class Battle
     {
         var result = new List<string>();
 
-        var cards = MyCreatureCards()
+        var cards = _myCreatureCards
             .Where(c => c.Attack > 0).ToList();
-        var battleTeams = GetAttackCombos(cards);
+        var battleTeams = GetAttackCombos();
 
         result.AddRange(RemoveDefenders(
             battleTeams,
@@ -405,10 +487,10 @@ class Battle
     }
 
     // This is potentially a very slow routine, but with a 6 card limit I think it is worth a try
-    private Dictionary<int, List<BattleTeam>> GetAttackCombos(List<GameCard> attackCards)
+    private Dictionary<int, List<BattleTeam>> GetAttackCombos()
     {
         var result = new Dictionary<int, List<BattleTeam>>();
-        var combos = Combinations.GetAllCombos<GameCard>(attackCards);
+        var combos = Combinations.GetAllCombos<GameCard>(_myCreatureCards);
         foreach(var combo in combos)
         {
             var battleTeam = new BattleTeam(
@@ -461,7 +543,7 @@ class Battle
                 {
                     // 3 deep loop, wtf, needs sorting
                     checkTeam.Value.RemoveAll(bt => bt.Team.Any(gc => gc.Equals(member)));
-                    if (checkTeam.Value.Count() == 0)
+                    if (checkTeam.Value.Count == 0)
                     {
                         emptyKeys.Add(checkTeam.Key);
                     }
@@ -490,7 +572,7 @@ class Battle
         actions.AddRange(Summon());
         actions.AddRange(Attack());
 
-        var result = actions.Count() > 0
+        var result = actions.Count > 0
             ? string.Join(";", actions)
             : "PASS";
 
