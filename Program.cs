@@ -87,7 +87,10 @@ public enum CardAbility
 {
     Breakthrough = 'B',
     Charge = 'C',
-    Guard = 'G'
+    Guard = 'G',
+    Drain = 'D',
+    Lethal = 'L',
+    Ward = 'W'
 }
 public enum CardLocation
 {
@@ -109,7 +112,8 @@ class State
     public int Turn { get; set; }
     public GameMode GameMode { get {
         return Turn > 30 ? GameMode.Battle : GameMode.Draft;
-    }}  
+    }}
+    public Deck MyDeck { get; set;} = new Deck();
 }
 
 class GameFactoryBuilder
@@ -190,7 +194,7 @@ class GameFactoryBuilder
 
         if (_state.GameMode == GameMode.Draft)
         {
-            var draft = new Draft(_gameDeck, _stopwatch);
+            var draft = new Draft(_gameDeck, _state, _stopwatch);
             action = draft.Command();
         } 
         else if (_state.GameMode == GameMode.Battle)
@@ -254,24 +258,40 @@ class GameCard : IEquatable<GameCard>
 
 class Draft
 {
+    private const int DECK_SIZE = 30;
+    private const int ABILITY_VALUE = 3;
+    private const int CARD_WEIGHTING = 150;
+    private Dictionary<int, int> _deckTarget = new Dictionary<int, int> {
+        {1, 5},
+        {2, 6},
+        {3, 7},
+        {4, 5},
+        {5, 2},
+        {6, 1},
+        {7, 1}
+    };
     private List<GameCard> _cards;
+    private State _state;
     private Stopwatch _stopwatch;
 
-    public Draft(List<GameCard> cards, Stopwatch stopwatch)
+
+    public Draft(List<GameCard> cards, State state, Stopwatch stopwatch)
     {
         _cards = cards;
+        _state = state;
         _stopwatch = stopwatch;
     }
 
     public int Choice()
     {
         var cardSelection = _cards
-            .OrderBy(g => g.Cost)
-            .ThenByDescending(g => g.Abilities.Count())
+            .OrderByDescending(g => CardValue(g))
             .First();
 
         var result = _cards
             .IndexOf(cardSelection);
+
+        _state.MyDeck.AddCard(cardSelection);
 
         return result;
     }
@@ -282,6 +302,23 @@ class Draft
         var result = $"PICK {draftPick}";
 
         return result;
+    }
+
+    private double CardValue(GameCard card)
+    {
+        var cardCost = card.Cost;
+        if (cardCost < 1) cardCost = 1;
+        if (cardCost > 7) cardCost = 7;
+
+        var cardValue = 
+            // The cost curve push
+            ((double) (_deckTarget[cardCost] - _state.MyDeck.CostCurve[cardCost]) / (double) DECK_SIZE) * CARD_WEIGHTING +
+            // Abilities adjustment
+            (double) card.Abilities.Count() * (double) ABILITY_VALUE +
+            // Fighting abilities
+            (double) card.Attack + (double) card.Defence;
+
+        return cardValue;
     }
 }
 
@@ -295,6 +332,7 @@ class Battle
     private List<GameCard> _summonableCards;
     private List<GameCard> _myCreatureCards;
     private int _summonSlots;
+    private List<GameCard> _summonedCards = new List<GameCard>();
 
     public Battle(int mana, List<GameCard> gameDeck, Stopwatch stopwatch)
     {
@@ -339,7 +377,7 @@ class Battle
     {
         // Pick a summonable card (semi-random)
         var result = _summonableCards
-            .Where(c => c.Cost < _mana &&
+            .Where(c => c.Cost <= _mana &&
                 c.CardType == CardType.Creature)        
             .FirstOrDefault();
         _summonableCards.Remove(result);
@@ -357,35 +395,50 @@ class Battle
         {
             // Pick a no creature item card
             result = (_summonableCards
-                .Where(c => c.Cost < _mana &&
+                .Where(c => c.Cost <= _mana &&
                     c.CardType == CardType.BlueItem)        
                 .FirstOrDefault(), -1);
             _summonableCards.Remove(result.Item1);
             if (result.Item1 != null) break;
 
             // Target an opponent creature if one exists
-            var opponent = _opponentCreatureCards.FirstOrDefault();
-            if (opponent != null) {
+            var creature = _opponentCreatureCards.FirstOrDefault();
+            if (creature != null) {
             result = (_summonableCards
-                .Where(c => c.Cost < _mana &&
+                .Where(c => c.Cost <= _mana &&
                     c.CardType == CardType.RedItem)        
-                .FirstOrDefault(), opponent.InstanceId);
+                .FirstOrDefault(), creature.InstanceId);
                 if (result.Item1 != null)
                 {
                     _summonableCards.Remove(result.Item1);
-                    opponent.Attack += result.Item1.Attack;
-                    opponent.Defence += result.Item1.Defence;
-                    if (opponent.Defence < 1) _opponentCreatureCards.Remove(opponent);
+                    creature.Attack += result.Item1.Attack;
+                    creature.Defence += result.Item1.Defence;
+                    if (creature.Defence < 1) _opponentCreatureCards.Remove(creature);
                     break;
                 }
             }
 
-            // Target an opponent if one exists
-            // TODO - consider looking at newly summoned creatures
-            var creature = _myCreatureCards.FirstOrDefault();
+            // Target my creature in play
+            creature = _myCreatureCards.FirstOrDefault();
             if (creature != null) {
             result = (_summonableCards
-                .Where(c => c.Cost < _mana &&
+                .Where(c => c.Cost <= _mana &&
+                    c.CardType == CardType.GreenItem)        
+                .FirstOrDefault(), creature.InstanceId);
+                if (result.Item1 != null)
+                {
+                    _summonableCards.Remove(result.Item1);
+                    creature.Attack += result.Item1.Attack;
+                    creature.Defence += result.Item1.Defence;
+                    break;
+                }
+            }
+
+            // Target my creature summoning sickness
+            creature = _summonedCards.FirstOrDefault();
+            if (creature != null) {
+            result = (_summonableCards
+                .Where(c => c.Cost <= _mana &&
                     c.CardType == CardType.GreenItem)        
                 .FirstOrDefault(), creature.InstanceId);
                 if (result.Item1 != null)
@@ -417,9 +470,9 @@ class Battle
             if (summonCard.Abilities.Any(a => a == CardAbility.Charge))
             {
                 // If summon has charge then record it as in the playfield
-                _gameDeck
-                    .Single(c => c.InstanceId == summonCard.InstanceId)
-                    .Location = CardLocation.PlayerField;
+                _myCreatureCards.Add(summonCard);
+            } else {
+                _summonedCards.Add(summonCard);
             }
 
             result.Add(summonOutput);
@@ -594,6 +647,49 @@ class BattleTeam
         Team = team;
         AttackStrength = attackStrength;
         DefenceStrength = defenceStrength;
+    }
+}
+
+class Deck
+{
+    public List<GameCard> Cards = new List<GameCard>();
+    public Dictionary<int, int> CostCurve = new Dictionary<int, int> {
+        {1, 0},
+        {2, 0},
+        {3, 0},
+        {4, 0},
+        {5, 0},
+        {6, 0},
+        {7, 0}
+    };
+    public Dictionary<CardAbility, int> AbilityCurve = new Dictionary<CardAbility, int> {
+        {CardAbility.Breakthrough, 0},
+        {CardAbility.Charge, 0},
+        {CardAbility.Drain, 0},
+        {CardAbility.Guard, 0},
+        {CardAbility.Lethal, 0},
+        {CardAbility.Ward, 0}
+    };
+    public Dictionary<CardType, int> TypeCurve = new Dictionary<CardType, int> {
+        {CardType.BlueItem, 0},
+        {CardType.Creature, 0},
+        {CardType.GreenItem, 0},
+        {CardType.RedItem, 0}
+    };
+
+    public void AddCard(GameCard card)
+    {
+        var cardCost = card.Cost;
+        if (cardCost < 1) cardCost = 1;
+        if (cardCost > 7) cardCost = 7;
+
+        Cards.Add(card);
+        CostCurve[cardCost]++;
+        foreach(var ability in card.Abilities)
+        {
+            AbilityCurve[ability]++;
+        }
+        TypeCurve[card.CardType]++;
     }
 }
 
