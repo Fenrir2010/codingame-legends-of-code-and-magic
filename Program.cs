@@ -260,7 +260,7 @@ class Draft
 {
     private const int DECK_SIZE = 30;
     private const int ABILITY_VALUE = 3;
-    private const int CARD_WEIGHTING = 150;
+    private const int CARD_WEIGHTING = 200;
     private Dictionary<int, int> _deckTarget = new Dictionary<int, int> {
         {1, 5},
         {2, 6},
